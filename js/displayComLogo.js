@@ -4,12 +4,12 @@ import { db, collection, query, orderBy, onSnapshot } from "../firebase/firebase
 
 // --- GLOBAL TRACKING STATE ---
 let activeSelectedCompanyId = null;
+let allCompaniesData = []; // cache of latest snapshot, used to build the modal grid
 
 // ---------------------------------------------------
 // STEP 1: Auto-tag booth cells (Normalized to UPPERCASE)
 // ---------------------------------------------------
 function tagBoothCells() {
-    // Matches booth-style text: A1, J1, U12, C9, 171, 96, etc.
     const boothPattern = /^[A-Za-z]{0,3}\d+$/;
 
     const scope = document.querySelectorAll(
@@ -26,7 +26,6 @@ function tagBoothCells() {
         if (!boothPattern.test(text)) return;
 
         el.classList.add("booth-cell");
-        // Always store as UPPERCASE for consistent query matching
         el.dataset.booth = text.toUpperCase();
         count++;
     });
@@ -35,24 +34,73 @@ function tagBoothCells() {
 }
 
 // ---------------------------------------------------
-// STEP 2: Listen to booth/company cards in REAL-TIME from Firestore
+// Card builder for the modal grid
+// ---------------------------------------------------
+function createCompanyCard(data, compId) {
+    const card = document.createElement("div");
+    card.className = "company-card";
+    card.dataset.companyId = compId;
+
+    if (activeSelectedCompanyId !== null && compId === activeSelectedCompanyId) {
+        card.classList.add("active-selected-card");
+    }
+
+    const dotHtml = data.statusColor
+        ? `<span class="company-status-dot" style="--dot-color:${data.statusColor}"></span>`
+        : "";
+
+    card.innerHTML = `
+        ${dotHtml}
+        <div class="companyLogo">
+            <img src="${data.asset || ''}" alt="${data.companyName || 'Brand'} Logo" />
+        </div>
+        <div class="company-name">${data.companyName || 'Unnamed'}</div>
+    `;
+
+    card.addEventListener("click", () => {
+        if (activeSelectedCompanyId === compId) {
+            activeSelectedCompanyId = null;
+            resetAllHighlights();
+        } else {
+            activeSelectedCompanyId = compId;
+            highlightBooths(data);
+        }
+
+        syncActiveCardStyling();
+        closeCompanyModal(); // jump to the map after picking a company
+    });
+
+    return card;
+}
+
+// Keeps the "active-selected-card" class correct across the modal grid
+function syncActiveCardStyling() {
+    document.querySelectorAll(".company-card").forEach(c => {
+        if (activeSelectedCompanyId !== null && c.dataset.companyId === String(activeSelectedCompanyId)) {
+            c.classList.add("active-selected-card");
+        } else {
+            c.classList.remove("active-selected-card");
+        }
+    });
+}
+
+// ---------------------------------------------------
+// STEP 2: Listen to booth/company data in REAL-TIME from Firestore
+// (No sidebar list — just keeps the cache + modal fresh)
 // ---------------------------------------------------
 function listenToBooths() {
-    const container = document.getElementById("boothContainer");
-    if (!container) return;
-
     console.log("Listening to booths in real-time from Firestore...");
 
     const boothsCollection = collection(db, "companyBoots");
     const q = query(boothsCollection, orderBy("companyId", "asc"));
 
     onSnapshot(q, (snapshot) => {
-        container.innerHTML = "";
+        allCompaniesData = [];
 
         if (snapshot.empty) {
-            container.innerHTML = "<p>No booths found.</p>";
             activeSelectedCompanyId = null;
             resetAllHighlights();
+            renderModalGrid();
             return;
         }
 
@@ -62,45 +110,15 @@ function listenToBooths() {
             const data = docSnapshot.data();
             const compId = data.companyId;
 
-            const card = document.createElement("div");
-            card.className = "company-card";
-            card.style.cursor = "pointer";
+            allCompaniesData.push(data);
 
             if (activeSelectedCompanyId !== null && compId === activeSelectedCompanyId) {
-                card.classList.add("active-selected-card");
                 currentlyActiveCompanyData = data;
             }
-
-            if (data.statusColor) {
-                card.style.borderTop = `5px solid ${data.statusColor}`;
-            }
-
-            card.innerHTML = `
-                <div class="companyLogo">
-                    <img src="${data.asset || ''}" alt="${data.companyName || 'Brand'} Logo" />
-                </div>
-                <div class="company-name">${data.companyName || 'Unnamed'}</div>
-            `;
-
-            card.addEventListener("click", () => {
-                if (activeSelectedCompanyId === compId) {
-                    activeSelectedCompanyId = null;
-                    resetAllHighlights();
-                    card.classList.remove("active-selected-card");
-                } else {
-                    activeSelectedCompanyId = compId;
-
-                    document.querySelectorAll(".company-card").forEach(c => c.classList.remove("active-selected-card"));
-                    card.classList.add("active-selected-card");
-
-                    highlightBooths(data);
-                }
-            });
-
-            container.appendChild(card);
         });
 
-        // Re-highlight if active company updated or deleted in real-time
+        renderModalGrid();
+
         if (activeSelectedCompanyId !== null) {
             if (currentlyActiveCompanyData) {
                 highlightBooths(currentlyActiveCompanyData);
@@ -110,10 +128,9 @@ function listenToBooths() {
             }
         }
 
-        console.log("⚡ Real-time display sync completed!");
+        console.log("⚡ Real-time data sync completed!");
     }, (error) => {
         console.error("❌ Error syncing real-time board data:", error);
-        container.innerHTML = `<p style="color: red;">Error updating board data: ${error.message}</p>`;
     });
 }
 
@@ -157,7 +174,6 @@ function highlightBooths(data) {
                 cell.style.backgroundColor = data.statusColor || "#007bff";
                 cell.classList.add("highlighted");
 
-                // Avoid adding duplicate pins if clicked repeatedly
                 if (!cell.querySelector(".booth-pin")) {
                     const pin = document.createElement("i");
                     pin.className = "fa-solid fa-location-dot booth-pin";
@@ -179,9 +195,63 @@ function highlightBooths(data) {
 }
 
 // ---------------------------------------------------
-// STEP 4: Run everything on page load
+// STEP 4: Popup / Modal logic
+// ---------------------------------------------------
+function renderModalGrid() {
+    const overlay = document.getElementById("companyModalOverlay");
+    const modalGrid = document.getElementById("companyModalGrid");
+    if (!overlay || !modalGrid) return;
+
+    modalGrid.innerHTML = "";
+
+    if (allCompaniesData.length === 0) {
+        modalGrid.innerHTML = "<p>No booths found.</p>";
+        return;
+    }
+
+    allCompaniesData.forEach(data => {
+        const card = createCompanyCard(data, data.companyId);
+        modalGrid.appendChild(card);
+    });
+}
+
+function openCompanyModal() {
+    const overlay = document.getElementById("companyModalOverlay");
+    if (!overlay) return;
+    overlay.classList.add("open");
+    renderModalGrid();
+}
+
+function closeCompanyModal() {
+    const overlay = document.getElementById("companyModalOverlay");
+    if (!overlay) return;
+    overlay.classList.remove("open");
+}
+
+function setupModalControls() {
+    const openBtn = document.getElementById("openCompanyListBtn");
+    const closeBtn = document.getElementById("closeCompanyModalBtn");
+    const overlay = document.getElementById("companyModalOverlay");
+
+    if (openBtn) openBtn.addEventListener("click", openCompanyModal);
+    if (closeBtn) closeBtn.addEventListener("click", closeCompanyModal);
+
+    if (overlay) {
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) closeCompanyModal();
+        });
+    }
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeCompanyModal();
+    });
+}
+
+// ---------------------------------------------------
+// STEP 5: Run everything on page load
 // ---------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
     tagBoothCells();
     listenToBooths();
+    setupModalControls();
 });

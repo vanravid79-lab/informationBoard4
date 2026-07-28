@@ -733,7 +733,6 @@
 
                                     </div>
 
-
                                 </div>
                             </div>
                         </div>
@@ -943,10 +942,23 @@
 
 
 
+
+
     <div class="userCompanyLogo">
-        <h3 class="logo-grid-title">Exhibiting Companies</h3>
-        <p class="logo-grid-subtitle">Tap a logo to see its booth location on the map</p>
-        <div id="boothContainer" class="logo-grid"></div>
+        <button id="openCompanyListBtn" class="view-all-btn">Exhibiting Companies</button>
+    </div>
+
+    <div id="companyModalOverlay" class="company-modal-overlay">
+        <div class="company-modal">
+            <div class="company-modal-header">
+                <div class="company-modal-header-text">
+                    <h3>Exhibiting Companies</h3>
+                    <p>Tap a logo to see its booth location on the map</p>
+                </div>
+                <button id="closeCompanyModalBtn" class="close-modal-btn">&times;</button>
+            </div>
+            <div id="companyModalGrid" class="logo-grid"></div>
+        </div>
     </div>
 
 

@@ -32,9 +32,14 @@ body {
   background-color: var(--bg-main);
   margin: 0;
   font-family: var(--font-stack);
+  height: 100%;
   min-height: 100%;
   overflow-x: hidden;
   overflow-y: hidden;
+  overscroll-behavior: none;
+  position: fixed;
+  inset: 0;
+  width: 100%;
 }
 
 /* --- LAYOUT GRID SYSTEM --- */
